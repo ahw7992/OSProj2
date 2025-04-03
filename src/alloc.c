@@ -33,6 +33,11 @@ void *split(free_block *block, int size) {
     return block;
 }
 
+
+/* for the sake of tracking the last allocated free block for next fit */
+static free_block *last_alloc = NULL; 
+
+
 /**
  * Find the previous neighbor of a block
  *
@@ -137,7 +142,25 @@ void *coalesce(free_block *block) {
  * @return A pointer to the allocated memory
  */
 void *do_alloc(size_t size) {
-    return NULL;
+    void *p = sbrk(0); 
+    unsigned long addr = (unsigned long)p;  // pointer to integer
+    
+    size_t misalignment = addr & (ALIGNMENT - 1);
+    if (misalignment != 0) {
+        size_t adjustment = ALIGNMENT - misalignment;
+        if (sbrk(adjustment) == (void *)-1) return NULL;  // aligns memory
+    }
+
+    // Request memory from OS
+    void *new_block = sbrk(size + sizeof(free_block));
+    if (new_block == (void *)-1) return NULL;  // sbrk failed
+
+    // Initialize block metadata
+    free_block *block = (free_block *)new_block;
+    block->size = size;
+    block->next = NULL;
+
+    return (void *)((char *)block + sizeof(free_block));
 }
 
 /**
@@ -147,8 +170,38 @@ void *do_alloc(size_t size) {
  * @return A pointer to the requested block of memory
  */
 void *tumalloc(size_t size) {
-    return NULL;
-}
+    if (!HEAD) {
+        return do_alloc(size);  // this is for if the free list is empty
+    }
+
+    free_block *prev = NULL;
+    free_block *block = last_alloc ? last_alloc->next : HEAD;
+    free_block *start = block;  // starting point for wrap-around
+
+    while (block) {
+        if (block->size >= size) {
+            // woohoo! we found a block big enough, split if necessary
+            void *allocated = split(block, size);
+            if (allocated) {
+                remove_free_block(block);
+                last_alloc = block;  // next fit stuff
+                return (void *)((char *)block + sizeof(free_block));  // returns usable memory
+            }
+        }
+        prev = block;
+        block = block->next;
+
+        if (!block && start != HEAD) {
+            block = HEAD;
+            start = HEAD;  
+        }
+    }
+
+        // atp, no suitable block is found
+        void *ptr = do_alloc(size);
+        return ptr;
+    }
+
 
 /**
  * Allocates and initializes a list of elements for the end user
@@ -158,7 +211,18 @@ void *tumalloc(size_t size) {
  * @return A pointer to the requested block of initialized memory
  */
 void *tucalloc(size_t num, size_t size) {
-    return NULL;
+
+    size_t total_size = num * size;
+    
+    void *ptr = tumalloc(total_size); //using tumalloc to allocate mem
+    
+    if (!ptr) { 
+        return NULL;
+    }
+
+    memset(ptr, 0, total_size); // set the memory to 0
+    
+    return ptr;
 }
 
 /**
@@ -178,5 +242,23 @@ void *turealloc(void *ptr, size_t new_size) {
  * @param ptr Pointer to the allocated piece of memory
  */
 void tufree(void *ptr) {
+    if (!ptr) return;
 
+    header *block_header = (header *)ptr - sizeof(header);
+
+    if(block_header -> magic - 0x01234567) {
+        free_block *free_blk_header = (free_block *)block_header;
+        free_blk_header -> next = HEAD;
+        HEAD = free_blk_header;
+
+        coalesce(free_blk_header);
+
+    }
+        
+    else {
+        printf("MEMORY CORRUPTION DETECTED");
+        abort();
+    }
+
+    
 }
