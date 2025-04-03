@@ -144,20 +144,24 @@ void *coalesce(free_block *block) {
 void *do_alloc(size_t size) {
     
     void *p = sbrk(0); 
-    unsigned long addr = (unsigned long)p;  // pointer to integer
-    
-    size_t curr_alignment = addr & (ALIGNMENT - 1);
-    if (curr_alignment != 0) {
-        size_t adjustment = ALIGNMENT - curr_alignment;
-        if (sbrk(adjustment) == (void *)-1) return NULL;  // aligns memory
+    intptr_t addr = (intptr_t)p & (ALIGNMENT - 1);
+    intptr_t adjustment;
+
+    if (addr != 0) {
+        adjustment = ALIGNMENT - addr;
     }
+    else {
+        adjustment = 0;
+    }
+    void * block = sbrk(size + sizeof(header) + adjustment);
+    if (block == (void *)-1) return NULL;  // aligns memory
+    void *headstart = (void *)((intptr_t)block + adjustment); 
+    header *hdr_start = (header *)headstart;
 
-    // get memory from OS
-    void *new_block = sbrk(size + sizeof(header));
-    if (new_block == (void *)-1) return NULL;  // sbrk failed
+    hdr_start->magic = 0x01234567;
+    hdr_start->size = size;
 
-    header *block = (header *)new_block;
-    return (void *)((char *)block + sizeof(header));
+    return (void *)((char *)headstart + sizeof(header));
 }
 
 /**
@@ -185,8 +189,6 @@ void *tumalloc(size_t size) {
                     return allocated;
                 }
 
-                block_header.size = size;
-                block_header.magic = 0x01234567;
                 block = block->next;
                 return block + sizeof(header); // i don't think it's supposed to be block here
             }
