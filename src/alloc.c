@@ -289,6 +289,8 @@ void *turealloc(void *ptr, size_t new_size) {
         // copy the old data & use the smaller of old size or new_size
         size_t copy_size = (hdr->size < new_size) ? hdr->size : new_size;
         memcpy(new_block, ptr, copy_size);
+
+        tufree(ptr);
         
         return new_block;
     }
