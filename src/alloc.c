@@ -162,40 +162,46 @@ void *do_alloc(size_t size) {
     hdr_start->magic = 0x01234567;
     hdr_start->size = size;
 
-    return (void *)((char *)headstart + sizeof(header));
+    return (headstart + sizeof(header));
 }
 
 
 void *tunextfit(size_t true_size) {
-    printf("Starting tunextfit search\n"); //debug
+    //printf("Starting tunextfit search\n"); //debug
     if (HEAD == NULL) {
         return NULL;
     }
     free_block *block = (last_allocated) ? last_allocated : HEAD; // current blk
-    free_block *start = block; // to remember where we started
+    if (block == NULL) {
+        block = HEAD; // wrap around to the beginning
+    }
+    free_block *start = block;
 
     do {
-        if (block->size >= true_size + sizeof(header)) { 
+        printf("Checking if block at %p (size %zu) against required %zu\n", block, block->size, true_size);
+                
+       // check: can it be split and leave enough room for another free block?
+        if (block->size >= true_size) { 
+            printf("Found suitable block\n");
             remove_free_block(block); 
 
             void *split_blk = split(block, true_size);
-            free_block *alloc_block = (split_blk) ? (free_block *)split_blk : block;
-            header *hdr = (header *)alloc_block;
-            hdr->size = true_size - sizeof(header);
-            hdr->magic = 0x01234567;
-            
             if (split_blk) {
-                free_block *unused = (free_block*)((char*)split_blk + true_size + sizeof(free_block));    
+                printf("Splitting block. Remaining size: %zu\n", ((free_block*)split_blk)->size);
+                free_block *unused = (free_block*)split_blk;    
                 unused->next = HEAD;
                 HEAD = unused;
-                last_allocated = unused;
             }
-            else {
-                last_allocated = block->next;
-            }
+            last_allocated = block->next ? block->next : HEAD;
 
-            return (void *)(hdr + 1); 
+            header *hdr = (header *)block;
+            hdr->size = true_size - sizeof(header);
+            hdr->magic = 0x01234567;
+            printf("Allocating block at %p with magic 0x%x\n", hdr, hdr->magic);
+            
+            return (void *)((char *)block + sizeof(header)); 
         }
+        
         block = block->next;
         if (block == NULL) {
             block = HEAD; 
@@ -213,7 +219,7 @@ void *tunextfit(size_t true_size) {
  * @return A pointer to the requested block of memory
  */
 void *tumalloc(size_t size) {
-    printf("Requesting %zu bytes\n", size); // debug
+    //printf("Requesting %zu bytes\n", size); // debug
     void *ptr; 
 
     if (HEAD == NULL) {
@@ -221,17 +227,17 @@ void *tumalloc(size_t size) {
         return ptr;
     }
 
-    else{ 
     size_t true_size = size + sizeof(header);
     ptr = tunextfit(true_size); // going through the free list w/ next-fit
     if (ptr != NULL) {
+        //printf("Returning nextfit ptr\n");
         return ptr;
     }
     else {
+        //printf("ptr was null, setting ptr to do_alloc(size) and returning\n");
         ptr = do_alloc(size);
         return ptr;
     }
-}
 }
 
 
@@ -265,17 +271,26 @@ void *tucalloc(size_t num, size_t size) {
  * @return A new pointer containing the contents of ptr, but with the new_size
  */
 void *turealloc(void *ptr, size_t new_size) {
+    if (ptr == NULL) {
+        return tumalloc(new_size);
+    }
 
     void *new_block = tumalloc(new_size);
-    header *hdr = (header *)(ptr - sizeof(header));
-    if (hdr->magic == 0x01234567) {
-        memcpy(new_block, ptr, hdr->size);
-        tufree(ptr);
-        return new_block;
+    if (new_block == NULL) {
+        return NULL; 
     }
-    else {
+   
+    header *hdr = (header *)((char *)ptr - sizeof(header));
+    if (hdr->magic != 0x01234567) {
         printf("MEM CORRUPTION DETECTED IN TUREALLOC");
         abort();
+    }
+    else {
+        // copy the old data & use the smaller of old size or new_size
+        size_t copy_size = (hdr->size < new_size) ? hdr->size : new_size;
+        memcpy(new_block, ptr, copy_size);
+        
+        return new_block;
     }
 }
 
@@ -285,12 +300,11 @@ void *turealloc(void *ptr, size_t new_size) {
  * @param ptr Pointer to the allocated piece of memory
  */
 void tufree(void *ptr) {
-    
     if (!ptr) return;
 
     header *hdr = (header*)(ptr - sizeof(header));
-    printf("Freeing memory at %p\n", ptr); //debug
-    printf("Header size: %zu, Magic: 0x%x\n", hdr->size, hdr->magic);
+    //printf("Freeing memory at %p\n", ptr); //debug
+    //printf("Block size: %zu, Magic: 0x%08x\n", hdr->size + sizeof(header), hdr->magic);
 
     if (hdr->magic != 0x01234567) { // a bit diff from pseudocode, but still same test case.
         printf("MEMORY CORRUPTION DETECTED\n");
@@ -298,12 +312,18 @@ void tufree(void *ptr) {
         abort(); 
     }
     else {
+        free_block *block = (free_block *)hdr;
+        if (block->next == NULL && HEAD == block) {
+            // if the block is already in the free list
+            printf("Double free detected\n");
+            abort();
+        }
         
-        free_block *block = (free_block*)hdr;
         block->size = hdr->size;
         block->next = HEAD;
         HEAD = block;
         coalesce(block);
+        //printf("Free list head: %p\n", HEAD);
     }
 
 }

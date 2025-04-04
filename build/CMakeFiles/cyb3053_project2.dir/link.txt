@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG CMakeFiles/cyb3053_project2.dir/src/main.c.o CMakeFiles/cyb3053_project2.dir/src/alloc.c.o -o cyb3053_project2 
